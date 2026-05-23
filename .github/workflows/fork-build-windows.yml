@@ -1,0 +1,70 @@
+name: Fork build (Windows)
+
+on:
+  push:
+    branches:
+      - git-panel-multi-select
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "Cargo profile (release-fast = faster build, larger binary; release = smaller binary, slower build)"
+        type: choice
+        default: release-fast
+        options:
+          - release-fast
+          - release
+
+permissions:
+  contents: read
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSVC developer command prompt
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Pin Rust toolchain
+        run: |
+          rustup show active-toolchain
+          rustup target add wasm32-wasip2
+          rustup target add wasm32-unknown-unknown
+        shell: pwsh
+
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: fork-build-windows
+          cache-on-failure: true
+
+      - name: Resolve build profile
+        id: profile
+        shell: pwsh
+        run: |
+          $profile = if ('${{ github.event_name }}' -eq 'workflow_dispatch' -and '${{ inputs.profile }}') {
+            '${{ inputs.profile }}'
+          } else {
+            'release-fast'
+          }
+          "name=$profile" >> $env:GITHUB_OUTPUT
+          "ZED_OUTPUT_DIR=target/$profile" >> $env:GITHUB_ENV
+
+      - name: Build zed.exe
+        shell: pwsh
+        run: cargo build --profile ${{ steps.profile.outputs.name }} -p zed
+
+      - name: Upload zed.exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zed-windows-x86_64-${{ github.sha }}
+          path: ${{ env.ZED_OUTPUT_DIR }}/zed.exe
+          if-no-files-found: error
+          retention-days: 14
